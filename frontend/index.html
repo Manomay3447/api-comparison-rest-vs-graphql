@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>REST vs GraphQL API Comparison</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f7f7f7;
+      color: #222;
+    }
+    .controls {
+      text-align: center;
+      margin: 10px;
+    }
+    select {
+      padding: 6px;
+      font-size: 14px;
+    }
+    .chart-container {
+      width: 90%;
+      margin: 30px auto;
+    }
+    canvas {
+      background: white;
+      border: 1px solid #ccc;
+      padding: 10px;
+    }
+    .export-buttons {
+      text-align: center;
+      margin-top: 20px;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 5px;
+      background: #007BFF;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+  </style>
+</head>
+<body>
+
+<h1>📊 REST vs GraphQL API - Time Series Comparison</h1>
+
+<div class="controls">
+  <label for="metric">Select Metric: </label>
+  <select id="metric">
+    <option value="duration">Duration (s)</option>
+    <option value="ttfb">Time To First Byte (s)</option>
+    <option value="size">Response Size (bytes)</option>
+    <option value="count">Record Count</option>
+    <option value="rest_cpu">REST CPU Usage (%)</option>
+    <option value="graphql_cpu">GraphQL CPU Usage (%)</option>
+    <option value="rest_memory">REST Memory Usage (MB)</option>
+    <option value="graphql_memory">GraphQL Memory Usage (MB)</option>
+    <option value="system_cpu">System CPU (%)</option>
+    <option value="system_memory">System Memory (%)</option>
+    <option value="scalability">Scalability (Duration vs Users)</option>
+  </select>
+</div>
+
+<div class="chart-container">
+  <canvas id="comparisonChart"></canvas>
+</div>
+
+<div class="export-buttons">
+  <button onclick="downloadCSV()">📄 Export CSV</button>
+  <button onclick="downloadPDF()">🧾 Export PDF</button>
+</div>
+
+<script>
+let rawData = [];
+
+async function loadData() {
+  const res = await fetch("/report.json");
+  rawData = await res.json();
+  updateChart();
+}
+
+const ctx = document.getElementById('comparisonChart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: { datasets: [] },
+  options: {
+    responsive: true,
+    scales: {
+      x: {
+        type: document.getElementById("metric").value === 'scalability' ? 'linear' : 'time',
+  time: {
+    tooltipFormat: 'PPpp',
+    unit: 'minute'
+  },
+  title: {
+    display: true,
+    text: document.getElementById("metric").value === 'scalability' ? 'Concurrent Users' : 'Timestamp'
+  },
+  ticks: {
+    stepSize: document.getElementById("metric").value === 'scalability' ? 5 : undefined
+  }
+      },
+      y: {
+        title: { display: true, text: 'Metric Value' },
+        beginAtZero: true
+      }
+    },
+    plugins: {
+      title: { display: true, text: 'REST vs GraphQL Over Time' }
+    }
+  }
+});
+
+document.getElementById("metric").addEventListener("change", updateChart);
+
+function updateChart() {
+  const metric = document.getElementById("metric").value;
+
+// Dynamically adjust X-axis type based on metric
+if (metric === 'scalability') {
+  chart.options.scales.x.type = 'linear';
+  chart.options.scales.x.title.text = 'Concurrent Users';
+  chart.options.scales.x.ticks.stepSize = 5;
+} else {
+  chart.options.scales.x.type = 'time';
+  chart.options.scales.x.time = { tooltipFormat: 'PPpp', unit: 'minute' };
+  chart.options.scales.x.title.text = 'Timestamp';
+  chart.options.scales.x.ticks.stepSize = undefined;
+}
+
+  let restData = [], gqlData = [], label1 = "", label2 = "";
+
+  rawData.forEach(entry => {
+    let ts;
+	if (metric === 'scalability') {
+  		ts = entry.scalability_users ?? 0;
+	} else {
+  		ts = new Date(entry.timestamp || entry.rest?.headers?.Date || Date.now());
+	}
+    const users = entry.scalability_users || 0;
+    switch (metric) {
+      case "duration":
+      case "ttfb":
+      case "size":
+      case "count":
+        restData.push({ x: ts, y: entry.rest[metric] || 0 });
+        gqlData.push({ x: ts, y: entry.graphql[metric] || 0 });
+        label1 = "REST API";
+        label2 = "GraphQL API";
+        break;
+      case "scalability":
+        restData.push({ x: users, y: entry.rest?.duration ?? 0 });
+        gqlData.push({ x: users, y: entry.graphql?.duration ?? 0 });
+        label1 = "REST Duration (s)";
+        label2 = "GraphQL Duration (s)";
+        break;
+      case "rest_cpu":
+        restData.push({ x: ts, y: entry.rest.cpu_percent || 0 });
+        label1 = "REST CPU Usage";
+        break;
+      case "graphql_cpu":
+        gqlData.push({ x: ts, y: entry.graphql.cpu_percent || 0 });
+        label2 = "GraphQL CPU Usage";
+        break;
+      case "rest_memory":
+        restData.push({ x: ts, y: entry.rest.memory_mb || 0 });
+        label1 = "REST Memory (MB)";
+        break;
+      case "graphql_memory":
+        gqlData.push({ x: ts, y: entry.graphql.memory_mb || 0 });
+        label2 = "GraphQL Memory (MB)";
+        break;
+      case "system_cpu":
+        restData.push({ x: ts, y: entry.system?.cpu_percent || 0 });
+        gqlData.push({ x: ts, y: entry.system?.cpu_percent || 0 });
+        label1 = label2 = "System CPU";
+        break;
+      case "system_memory":
+        restData.push({ x: ts, y: entry.system?.memory_percent || 0 });
+        gqlData.push({ x: ts, y: entry.system?.memory_percent || 0 });
+        label1 = label2 = "System Memory";
+        break;
+    }
+  });
+
+  chart.data.datasets = [];
+
+  if (restData.length) {
+    chart.data.datasets.push({
+      label: label1,
+      data: restData,
+      borderColor: '#4caf50',
+      backgroundColor: 'rgba(76, 175, 80, 0.1)',
+      fill: false,
+      tension: 0.1
+    });
+  }
+
+  if (gqlData.length) {
+    chart.data.datasets.push({
+      label: label2,
+      data: gqlData,
+      borderColor: '#ff9800',
+      backgroundColor: 'rgba(255, 152, 0, 0.1)',
+      fill: false,
+      tension: 0.1
+    });
+  }
+
+  chart.options.scales.y.title.text = metric.replace(/_/g, ' ').toUpperCase();
+  chart.update();
+}
+
+function downloadCSV() {
+  const metric = document.getElementById("metric").value;
+  let csv = "Timestamp,REST,GraphQL\n";
+  rawData.forEach(entry => {
+    const ts = new Date(entry.timestamp || Date.now()).toISOString();
+    let restVal = "", gqlVal = "";
+    switch (metric) {
+      case "rest_cpu": restVal = entry.rest?.cpu_percent ?? ""; break;
+      case "graphql_cpu": gqlVal = entry.graphql?.cpu_percent ?? ""; break;
+      case "rest_memory": restVal = entry.rest?.memory_mb ?? ""; break;
+      case "graphql_memory": gqlVal = entry.graphql?.memory_mb ?? ""; break;
+      case "system_cpu": restVal = gqlVal = entry.system?.cpu_percent ?? ""; break;
+      case "system_memory": restVal = gqlVal = entry.system?.memory_percent ?? ""; break;
+      default:
+        restVal = entry.rest?.[metric] ?? "";
+        gqlVal = entry.graphql?.[metric] ?? "";
+    }
+    csv += `${ts},${restVal},${gqlVal}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  saveAs(blob, `api_${metric}_comparison.csv`);
+}
+
+function downloadPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const metric = document.getElementById("metric").value;
+
+  doc.setFontSize(16);
+  doc.text(`Metric: ${metric.replace(/_/g, " ").toUpperCase()}`, 20, 20);
+  doc.setFontSize(12);
+
+  let y = 30;
+  rawData.slice(-10).forEach(entry => {
+    const ts = new Date(entry.timestamp).toISOString();
+    let restVal = "", gqlVal = "";
+    switch (metric) {
+      case "rest_cpu": restVal = entry.rest?.cpu_percent ?? ""; break;
+      case "graphql_cpu": gqlVal = entry.graphql?.cpu_percent ?? ""; break;
+      case "rest_memory": restVal = entry.rest?.memory_mb ?? ""; break;
+      case "graphql_memory": gqlVal = entry.graphql?.memory_mb ?? ""; break;
+      case "system_cpu": restVal = gqlVal = entry.system?.cpu_percent ?? ""; break;
+      case "system_memory": restVal = gqlVal = entry.system?.memory_percent ?? ""; break;
+      default:
+        restVal = entry.rest?.[metric] ?? "";
+        gqlVal = entry.graphql?.[metric] ?? "";
+    }
+    doc.text(`${ts} | REST: ${restVal} | GraphQL: ${gqlVal}`, 10, y);
+    y += 10;
+  });
+
+  doc.save(`api_comparison_${metric}.pdf`);
+}
+
+loadData();
+setInterval(loadData, 10000);
+</script>
+</body>
+</html>
+

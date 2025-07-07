@@ -1,0 +1,11 @@
+| REST         | GraphQL                     |
+| ------------ | --------------------------- |
+| `GET /users` | \`\`\`graphql               |
+|              | { users { id name email } } |
+|              | \`\`\`                      |
+| REST           | GraphQL                            |
+| -------------- | ---------------------------------- |
+| `GET /user/42` | \`\`\`graphql                      |
+|                | { user(id: 42) { id name email } } |
+|                | \`\`\`                             |
+
